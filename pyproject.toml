@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tesla-charge-oracle"
+version = "0.1.0"
+description = "Charge Oracle for Tesla — ask in plain language for the cheapest way to charge to a target level by a time you pick: a solver picks the cheapest time-of-use windows, with OpenAI-compatible AI endpoints"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Raphael Malikian", email = "rtmalikian@gmail.com" }]
+keywords = ["tesla", "fleet-api", "openai-compatible", "llm", "ai", "charging-cost", "time-of-use", "off-peak", "charge-optimizer", "ollama", "ev", "model-3", "model-y", "model-s", "model-x", "cybertruck"]
+dependencies = [
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Home Automation",
+]
+
+[project.scripts]
+tcoracle = "tesla_charge_oracle.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rtmalikian/tesla-charge-oracle"
+Issues = "https://github.com/rtmalikian/tesla-charge-oracle/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

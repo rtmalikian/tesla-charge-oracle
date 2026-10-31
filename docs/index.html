@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tesla Charge Oracle — Live Demo (DEMO DATA)</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#222;line-height:1.5}
+.badge{display:inline-block;background:#f59e0b;color:#111;padding:.2rem .6rem;border-radius:999px;font-weight:700;font-size:.85rem}
+h1{font-size:1.6rem} label{display:block;margin:.6rem 0 .2rem;font-weight:600}
+input,select{width:100%;padding:.5rem;font-size:1rem;box-sizing:border-box}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 .8rem}
+button{margin-top:1rem;padding:.7rem 1.2rem;font-size:1rem;cursor:pointer}
+pre{background:#f4f4f4;padding:1rem;white-space:pre-wrap;border-radius:8px}
+.bar{height:18px;background:#e5e7eb;border-radius:4px;overflow:hidden;margin:.3rem 0}
+.bar>div{height:100%}
+.note{color:#555;font-size:.9rem}
+</style>
+</head>
+<body>
+<span class="badge">DEMO DATA — pretend car, pretend rates, no real Tesla connected</span>
+<h1>Tesla Charge Oracle — cheapest way to charge by morning</h1>
+<p>Ask like you would in real life. The solver below mirrors the app's real logic: it picks the cheapest 15-minute slots between plug-in and your deadline, merges them into windows, and prices them.</p>
+<div class="grid">
+<label>Plug in at <input id="plug" type="time" value="18:00"></label>
+<label>Ready by <input id="deadline" type="time" value="07:00"></label>
+<label>Current battery % <input id="cur" type="number" min="0" max="100" value="40"></label>
+<label>Target battery % <input id="tgt" type="number" min="50" max="100" value="90"></label>
+<label>Battery size (kWh) <input id="pack" type="number" min="30" max="200" value="75"></label>
+<label>Charger speed (kW) <input id="kw" type="number" min="1" max="22" step="0.1" value="11.5"></label>
+<label>Peak starts <input id="ps" type="time" value="16:00"></label>
+<label>Peak ends <input id="pe" type="time" value="21:00"></label>
+<label>Off-peak rate $/kWh <input id="ro" type="number" step="0.01" value="0.25"></label>
+<label>Mid-peak rate $/kWh <input id="rm" type="number" step="0.01" value="0.35"></label>
+<label>Peak rate $/kWh <input id="rp" type="number" step="0.01" value="0.55"></label>
+<label>Overnight cheap rate ends <input id="oe" type="time" value="08:00"></label>
+</div>
+<button onclick="run()">Find the cheapest plan</button>
+<button onclick="preset(18,7,40,90)">Overnight example</button>
+<button onclick="preset(18,7,85,80)">Already at target</button>
+<button onclick="preset(6,7,30,90)">One hour left</button>
+<pre id="out">Press "Find the cheapest plan".</pre>
+<p class="note">How it works in the real app: <code>tcoracle setup</code> asks these questions in plain words and writes your settings; <code>tcoracle plan</code> prints this same plan; the <code>/v1/chat/completions</code> endpoint answers "cheapest way to 90% by 7am?" with it. Source: <a href="https://github.com/rtmalikian/tesla-charge-oracle">github.com/rtmalikian/tesla-charge-oracle</a> (MIT).</p>
+<script>
+function mins(t){const[a,b]=t.split(':').map(Number);return a*60+b;}
+function fmt(m){m=((m%1440)+1440)%1440;let h=Math.floor(m/60),mm=m%60,s=h<12?'AM':'PM';h=h%12||12;return h+':'+String(mm).padStart(2,'0')+' '+s;}
+function inWin(m,s,e){if(s===e)return false;return s<e?(m>=s&&m<e):(m>=s||m<e);}
+function band(m,ps,pe,oe){if(inWin(m,ps,pe))return'peak';if(inWin(m,pe,oe))return'off-peak';return'mid-peak';}
+function preset(plug,dl,cur,tgt){
+  document.getElementById('plug').value=String(plug).padStart(2,'0')+':00';
+  document.getElementById('deadline').value=String(dl).padStart(2,'0')+':00';
+  document.getElementById('cur').value=cur;document.getElementById('tgt').value=tgt;run();
+}
+function run(){
+  const plug=mins(document.getElementById('plug').value), dl0=mins(document.getElementById('deadline').value);
+  const cur=+document.getElementById('cur').value, tgt=+document.getElementById('tgt').value;
+  const pack=+document.getElementById('pack').value, kw=+document.getElementById('kw').value, eff=0.90;
+  const ps=mins(document.getElementById('ps').value), pe=mins(document.getElementById('pe').value), oe=mins(document.getElementById('oe').value);
+  const rates={'peak':+document.getElementById('rp').value,'mid-peak':+document.getElementById('rm').value,'off-peak':+document.getElementById('ro').value};
+  const rateAt=m=>rates[band(m,ps,pe,oe)];
+  let dl=dl0; if(dl<=plug) dl+=1440;
+  let needed=Math.max(0,(tgt-cur)/100*pack);
+  let out='';
+  if(needed<=0){out=`Your car is already at ${cur}% — at or above your ${tgt}% target, so no charging is needed. Cost: $0.00.`;}
+  else{
+    let slots=[]; for(let t=plug;t<dl;t+=15) slots.push(t);
+    let perSlot=kw*0.25*eff, rem=needed, chosen={};
+    [...slots].sort((a,b)=>rateAt(a%1440)-rateAt(b%1440)||a-b).forEach(s=>{if(rem>0){let take=Math.min(perSlot,rem);chosen[s]=take;rem-=take;}});
+    let contRem=needed, contCost=0; slots.forEach(s=>{if(contRem>0){let take=Math.min(perSlot,contRem);contCost+=take/eff*rateAt(s%1440);contRem-=take;}});
+    let wins=[], cost=0, wall=0;
+    Object.keys(chosen).map(Number).sort((a,b)=>a-b).forEach(s=>{
+      let take=chosen[s], b=band(s%1440,ps,pe,oe), c=take/eff*rateAt(s%1440);
+      cost+=c; wall+=take/eff;
+      let last=wins[wins.length-1];
+      if(last && last.end===s && last.band===b){last.end=s+15;last.kwh+=take;last.cost+=c;}
+      else wins.push({start:s,end:s+15,band:b,rate:rateAt(s%1440),kwh:take,cost:c});
+    });
+    let delivered=wins.reduce((a,w)=>a+w.kwh,0), reached=cur+delivered/pack*100;
+    out=`Cheapest way to ${tgt}% by ${fmt(dl0)}:\n`;
+    wins.forEach(w=>{out+=`  • Charge ${fmt(w.start)}–${fmt(w.end)} (${w.band}, $${w.rate.toFixed(2)}/kWh, ${w.kwh.toFixed(1)} kWh into the battery, $${w.cost.toFixed(2)})\n`;});
+    out+=`Total: $${cost.toFixed(2)} for ${wall.toFixed(1)} kWh from the wall (${delivered.toFixed(1)} kWh into the battery).\n`;
+    if(reached>=tgt-0.01) out+=`You'll reach ${tgt}% by the deadline.\n`;
+    else out+=`Warning: even charging the whole time only reaches ${reached.toFixed(0)}% — ${(needed-delivered).toFixed(1)} kWh short of ${tgt}%. Leave earlier, plug in sooner, or lower the target.\n`;
+    if(contCost-cost>0.005) out+=`That's $${(contCost-cost).toFixed(2)} cheaper than charging straight away from now.`;
+  }
+  document.getElementById('out').textContent=out;
+}
+run();
+</script>
+</body>
+</html>
